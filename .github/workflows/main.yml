@@ -1,39 +1,68 @@
-name: 编译 Files 独立 EXE
+name: 编译独立 EXE 编译（最新目录）
 
 on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
+  workflow_dispatch:  # 手动触发编译
 
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      DOTNET_NOLOGO: true  # 禁用 .NET  Logo 输出，简化日志
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1  # 关闭遥测
 
     steps:
-      - name: 拉取源码
+      - name: 1. 拉取源码代码（含子模块）
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive'  # 拉取子模块（关键：解决依赖缺失）
+          ref: main  # 拉取主分支最新代码
+          submodules: recursive  # 必须拉取子模块，否则依赖缺失
 
-      - name: 安装 .NET 6.0 SDK
+      - name: 2. 安装 .NET 6.0 SDK（官方指定版本）
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 6.0.x
+          dotnet-quality: ga  # 稳定版 SDK
 
-      - name: 还原依赖包（指定正确的解决方案路径）
-        run: dotnet restore src/Files.sln  # 核心修正：解决方案在 src 目录下
-
-      - name: 编译 Release 版本（指定正确路径）
-        run: dotnet build src/Files.sln -c Release -p:Platform=x64 --no-restore
-
-      - name: 打包编译结果
+      - name: 3. 验证根目录解决方案文件
         run: |
-          $source = "./src/Files/bin/Release/net6.0-windows10.0.19041.0/win-x64"
-          $zipPath = "./Files_Release_x64.zip"
-          Compress-Archive -Path "$source/*" -DestinationPath $zipPath
+          $slnPath = "Files.sln"
+          if (-not (Test-Path $slnPath)) {
+            Write-Error "错误：根目录未找到 $slnPath，请检查仓库结构"
+            exit 1
+          }
+          Write-Host "✅ 已找到根目录解决方案：$slnPath"
 
-      - name: 上传编译产物
+      - name: 4. 还原项目依赖
+        run: dotnet restore Files.sln  # 直接使用根目录的解决方案
+
+      - name: 5. 编译独立 EXE（非 UWP 版本）
+        run: |
+          dotnet build Files.sln `
+            -c Release `  # 发布模式
+            -p:Platform=x64 `  # 64位平台
+            -p:WindowsPackageType=None `  # 关键：生成独立 EXE（非沙盒应用）
+            -p:TargetFramework=net6.0-windows10.0.19041.0 `  # 官方目标框架
+            --no-restore  # 已还原依赖，跳过此步骤
+
+      - name: 6. 验证 EXE 生成结果
+        run: |
+          $exePath = "src/Files.App/bin/Release/net6.0-windows10.0.19041.0/win-x64/Files.exe"
+          if (-not (Test-Path $exePath)) {
+            Write-Error "编译失败：未找到 $exePath"
+            exit 1
+          }
+          Write-Host "✅ 编译成功！EXE 路径：$exePath"
+
+      - name: 7. 打包 EXE 及依赖文件
+        run: |
+          $sourceDir = "src/Files.App/bin/Release/net6.0-windows10.0.19041.0/win-x64"
+          $zipName = "Files_Standalone_x64_$(Get-Date -Format 'yyyyMMdd').zip"
+          Compress-Archive -Path "$sourceDir/*" -DestinationPath $zipName -Force
+          Write-Host "✅ 已打包为：$zipName"
+
+      - name: 8. 上传编译产物（可下载）
         uses: actions/upload-artifact@v4
         with:
-          name: Files_Standalone_Exe
-          path: ./Files_Release_x64.zip
+          name: Files_独立可执行文件
+          path: "*.zip"  # 上传所有打包的 ZIP
+          retention-days: 14  # 产物保留 14 天
