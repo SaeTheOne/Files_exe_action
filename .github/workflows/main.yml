@@ -1,0 +1,37 @@
+name: 编译 Files 独立 EXE
+
+on:
+  push:
+    branches: [ main ]  # 当 main 分支有更新时自动编译
+  workflow_dispatch:  # 允许手动触发编译
+
+jobs:
+  build:
+    runs-on: windows-latest  # 使用 Windows 环境编译
+
+    steps:
+      - name: 拉取源码
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET 6.0 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 6.0.x
+
+      - name: 还原依赖包
+        run: dotnet restore Files.sln
+
+      - name: 编译 Release 版本
+        run: dotnet build Files.sln -c Release -p:Platform=x64 --no-restore
+
+      - name: 打包编译结果（生成 ZIP）
+        run: |
+          $source = "./Files/bin/Release/net6.0-windows10.0.19041.0/win-x64"
+          $zipPath = "./Files_Release_x64.zip"
+          Compress-Archive -Path "$source/*" -DestinationPath $zipPath
+
+      - name: 上传编译产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: Files_Standalone_Exe
+          path: ./Files_Release_x64.zip
